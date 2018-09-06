@@ -6,9 +6,13 @@ import time
 import sys
 import numpy as np
 import serial
+import random
+
+ARDUINO = False
 
 # Connect to the Arduino
-ser = serial.Serial('/dev/ttyACM0', 115200)
+if ARDUINO:
+    ser = serial.Serial('/dev/ttyACM0', 115200)
 
 # This is for sending the data to the Arduino. Each brightness value is
 # separated by : and the whole thing is enclosed in <>
@@ -22,8 +26,15 @@ def makeSerialString(arr):
     s += ">"
     return s
 
+if len(sys.argv) < 4:
+    print("Plays a wave file.\n\nUsage: %s filename.wav melbands.txt onsets.txt" % sys.argv[0])
+    sys.exit(-1)
+
+melbandFilename = sys.argv[2]
+onsetFilename = sys.argv[3]
+
 # melbands is our main thing
-file = open("melbands.txt", "r")
+file = open(melbandFilename, "r")
 melbands = file.readlines()
 melbands_start_times = []
 melbands_vals = []
@@ -59,12 +70,14 @@ for i in range(1, len(melbands_vals)):
 # Now we want to map the melbands to how many channels we have
 nVals = np.size(val_boxed[0])
 nMap = 10
+index_mapping = np.linspace(0, nMap-1, nMap).astype(int)
 
 # Write to Arduino to make sure the lights are off
 initialVals = []
 for i in range(0, nMap):
-    initialVals.append(i)
-ser.write(initialVals)
+    initialVals.append(0)
+if ARDUINO:
+    ser.write(makeSerialString(initialVals))
 
 # We create an arbitrary x axis for our melbands
 x = np.linspace(0, 1, nVals)
@@ -94,43 +107,8 @@ for i in range(0, len(mapped_val_boxed)):
     newVals = newVals.astype(int)
     mapped_val_boxed[i] = newVals
 
-# This is old and I was just using it to check the data
-outfile = open('boxed_melbands.txt', 'w')
-for i in range(0, len(val_boxed)):
-    outfile.write(str(time_boxed[i]))
-    outfile.write('\t')
-    outfile.write(str(val_boxed[i]))
-    outfile.write('\n')
-outfile.close()
-
-# I'm currently not using the pitch, beats, or notes, but I am using the
-# onsets to trigger channel updates
-file = open("pitch.txt", "r")
-pitch = file.readlines()
-pitch_vals = []
-pitch_start_times = []
-for line in pitch:
-    pitch_vals.append(float(line.rstrip().split()[1]))
-    pitch_start_times.append(float(line.rstrip().split()[0]))
-
-file = open("beats.txt", "r") 
-beats = file.readlines() 
-
-file = open("onsets.txt", "r") 
+file = open(onsetFilename, "r") 
 onsets = file.readlines()
-
-file = open("notes.txt", "r") 
-notes = file.readlines()
-note_vals = []
-start_times = []
-for line in notes:
-    if len(line.rstrip().split()) > 1:
-        note_vals.append(float(line.rstrip().split()[0]))
-        start_times.append(float(line.rstrip().split()[1]))
-    
-if len(sys.argv) < 2:
-    print("Plays a wave file.\n\nUsage: %s filename.wav" % sys.argv[0])
-    sys.exit(-1)
 
 wf = wave.open(sys.argv[1], 'rb')
 
@@ -159,48 +137,50 @@ stream.start_stream()
 
 # wait for stream to finish (5)
 start_time = time.time()
-next_beat = float(beats.pop(0))
 next_onset = float(onsets.pop(0))
-next_note_val = note_vals.pop(0)
-next_note_start = start_times.pop(0)
-next_pitch_val = pitch_vals.pop(0)
-next_pitch_start = pitch_start_times.pop(0)
 next_melbands_val = mapped_val_boxed.pop(0)
 next_melbands_start = time_boxed.pop(0)
 shouldChange = True
 while stream.is_active():
-    if time.time() - start_time >= next_beat:
-        #print "Beat",str(next_beat)
-        next_beat = float(beats.pop(0))
 
     if time.time() - start_time >= next_onset:
-        print "Onset",str(next_onset)
         shouldChange = True
-        next_onset = float(onsets.pop(0))
-
-    if time.time() - start_time >= next_note_start:
-        #print next_note_val,"Note",next_note_start
-        next_note_val = note_vals.pop(0)
-        next_note_start = start_times.pop(0)
-    
-    if time.time() - start_time >= next_pitch_start:
-        #print "Pitch",next_pitch_val
-        next_pitch_val = pitch_vals.pop(0)
-        next_pitch_start = pitch_start_times.pop(0)
+        try:
+            next_onset = float(onsets.pop(0))
+        except:
+            dummy = 0
 
     if time.time() - start_time >= next_melbands_start:
-        print ' '.join(['%3.f']*len(next_melbands_val)) % tuple(next_melbands_val)
         if shouldChange:
-            ser.write(makeSerialString(next_melbands_val.tolist()))
-            ser.flushInput()
-            ser.flushOutput()
+            mean_val = np.mean(next_melbands_val)
+            prob_cutoff = 0.5 * mean_val / 255
+            if prob_cutoff > random.random():
+                np.random.shuffle(index_mapping)
+                print 'Shuffling'
+            print ' '.join(['%3.f']*len(next_melbands_val)) % tuple(next_melbands_val)
+            if ARDUINO:
+                ser.write(makeSerialString(next_melbands_val[index_mapping].tolist()))
+                ser.flushInput()
+                ser.flushOutput()
             shouldChange = False
-        #print next_melbands_val
-        next_melbands_val = mapped_val_boxed.pop(0)
-        next_melbands_start = time_boxed.pop(0)
+        try:
+            next_melbands_val = mapped_val_boxed.pop(0)
+            next_melbands_start = time_boxed.pop(0)
+        except:
+            dummy = 0
 
     time.sleep(0.01)
 
+for i in range(0, len(next_melbands_val)):
+    if next_melbands_val[i] > 0:
+        next_melbands_val[i] = next_melbands_val[i] -= 1
+    print ' '.join(['%3.f']*len(next_melbands_val)) % tuple(next_melbands_val)
+    if ARDUINO:
+        ser.write(makeSerialString(next_melbands_val[index_mapping].tolist()))
+    time.sleep(0.05)
+
+if ARDUINO:
+    ser.write(makeSerialString(initialVals))
 # stop stream (6)
 stream.stop_stream()
 stream.close()
