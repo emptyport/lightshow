@@ -8,7 +8,7 @@ import numpy as np
 import serial
 import random
 
-ARDUINO = False
+ARDUINO = True
 
 # Connect to the Arduino
 if ARDUINO:
@@ -171,16 +171,20 @@ while stream.is_active():
 
     time.sleep(0.01)
 
-for i in range(0, len(next_melbands_val)):
+while np.mean(next_melbands_val) > 0:
     if next_melbands_val[i] > 0:
-        next_melbands_val[i] = next_melbands_val[i] -= 1
+        next_melbands_val[i] = next_melbands_val[i] - 1
     print ' '.join(['%3.f']*len(next_melbands_val)) % tuple(next_melbands_val)
     if ARDUINO:
         ser.write(makeSerialString(next_melbands_val[index_mapping].tolist()))
+        ser.flushInput()
+        ser.flushOutput()
     time.sleep(0.05)
 
 if ARDUINO:
     ser.write(makeSerialString(initialVals))
+    ser.flushInput()
+    ser.flushOutput()
 # stop stream (6)
 stream.stop_stream()
 stream.close()
