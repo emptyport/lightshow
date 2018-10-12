@@ -44,7 +44,10 @@ for song in song_names:
     audio_filename = './wav/'+song+'.wav'
     time_filename = './seq/'+song+'.times'
     data_filename = './seq/'+song+'.dat'
+    onset_filename = './seq/'+song+'.onsets'
 
+    onsets_file = open(onset_filename, 'r')
+    onsets = onsets_file.readlines()
     times = np.loadtxt(time_filename).tolist()
     vals = list(np.loadtxt(data_filename, delimiter=','))
 
@@ -62,25 +65,36 @@ for song in song_names:
     start_time = time.time()
     next_time = times.pop(0)
     next_val = vals.pop(0)
+    next_onset = float(onsets.pop(0))
+    shouldChange = True
 
     while stream.is_active():
-        if time.time() - start_time >= next_time:
-            mean_val = np.mean(next_val)
-            prob_cutoff = 0.5 * mean_val / 255
-            #if prob_cutoff > random.random():
-            #    np.random.shuffle(index_mapping)
-            #    print 'Shuffling'
-            print ' '.join(['%3.f']*len(next_val)) % tuple(next_val)
-            if ARDUINO:
-                ser.write(makeSerialString(next_val[index_mapping].tolist()))
-                ser.flushInput()
-                ser.flushOutput()
+        if time.time() - start_time >= next_onset:
+            shouldChange = True
             try:
-                next_val = vals.pop(0)
-                next_time = times.pop(0)
+                next_onset = float(onsets.pop(0))
             except:
                 dummy = 0
-        time.sleep(0.01)
+
+        if time.time() - start_time >= next_time:
+            if shouldChange:
+                mean_val = np.mean(next_val)
+                prob_cutoff = 0.5 * mean_val / 255
+                if prob_cutoff > random.random():
+                    np.random.shuffle(index_mapping)
+                    print 'Shuffling'
+                print ' '.join(['%3.f']*len(next_val)) % tuple(next_val[index_mapping])
+                if ARDUINO:
+                    ser.write(makeSerialString(next_val[index_mapping].tolist()))
+                    ser.flushInput()
+                    ser.flushOutput()
+                shouldChange = False
+                try:
+                    next_val = vals.pop(0)
+                    next_time = times.pop(0)
+                except:
+                    dummy = 0
+        time.sleep(0.001)
 
     if ARDUINO:
         ser.write(makeSerialString(initialVals))

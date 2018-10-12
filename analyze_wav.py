@@ -1,9 +1,15 @@
 import glob
 import numpy as np
-import librosa
+import subprocess
+
+def smooth(y, box_pts):
+    box = np.ones(box_pts)/box_pts
+    y_smooth = np.convolve(y, box, mode='same')
+    return y_smooth
 
 TIME_DIFF = 0.041667
 N_CHANNELS = 10
+MA_WINDOW = 21
 
 files_to_analyze = glob.glob("./wav/*.wav")
 
@@ -13,47 +19,78 @@ print 'Analyzing',length,'audio files...'
 count = 1
 for file in files_to_analyze:
     print 'Processing file',count,'of',length,file
-    #file = file.replace(" ", "\ ")
+    aubio_file = file.replace(" ", "\ ")
+
+    print 'Melbands...'
+    command = "aubio melbands "+aubio_file+" > ./tmp.txt"
+    return_code = subprocess.call(command, shell=True)
+    print 'Onsets...'
+    command = "aubio onset "+aubio_file+" > "+aubio_file.replace("./wav/", "./seq/").replace(".wav", ".onsets")
+    return_code = subprocess.call(command, shell=True)
+
     print 'Reading...'
-    y, sr = librosa.load(file)
-    print 'Analyzing...'
-    duration = librosa.core.get_duration(y, sr=sr)
-    y_harmonic, y_percussive = librosa.effects.hpss(y)
-    C = librosa.feature.chroma_cqt(y=y_harmonic, sr=sr, n_chroma=N_CHANNELS)
-    C = np.transpose(C)
-    C = C.tolist()
-    times = np.linspace(1/sr, duration, len(C))
+    melband_file = open('./tmp.txt', 'r')
+    melbands = melband_file.readlines()
+    times = []
+    vals = []
+    for line in melbands:
+        times.append(float(line.rstrip().split()[0]))
+
+        rawVals = line.rstrip().split()[1:]
+        arr = []
+        for val in rawVals:
+            arr.append(float(val))
+        vals.append(np.asarray(arr))
 
     print 'Binning...'
-    val_boxed = [C[0]]
+    val_boxed = [vals[0]]
     time_boxed = [times[0]]
     val_queue = []
     time_queue = []
-    for i in range(1, len(C)):
-        val_queue.append(C[i])
+    for i in range(1, len(vals)):
+        val_queue.append(vals[i])
         time_queue.append(times[i])
         if times[i] - time_boxed[-1] > TIME_DIFF:
             val_boxed.append(np.mean(val_queue, axis=0))
             time_boxed.append((time_queue[-1] + time_queue[0])/2)
             val_queue = []
             time_queue = []
- 
+    
+    print 'Mapping...'
+    x = np.linspace(0, 1, np.size(vals[0]))
+    newX = np.linspace(0, 1, N_CHANNELS)
+    mapped_vals = []
+    for y in val_boxed:
+        newY = np.interp(newX, x, y)
+        mapped_vals.append(newY)
+
+    print 'Smoothing...'
+    for i in range(0, len(mapped_vals)):
+        lowerBound = i-MA_WINDOW
+        if lowerBound < 0:
+            lowerBound = 0
+        upperBound = i+MA_WINDOW
+        if upperBound > len(mapped_vals):
+            upperBound = len(mapped_vals)
+        meanVal = np.mean(mapped_vals[lowerBound:upperBound], axis=0)
+        mapped_vals[i] = meanVal
+
     print 'Normalizing...'
-    for i in range(0, len(val_boxed)):
+    for i in range(0, len(mapped_vals)):
         lowerBound = i
         if lowerBound < 0:
             lowerBound = 0
-        upperBound = i+1
-        if upperBound > len(val_boxed):
-            upperBound = len(val_boxed)
-        maxVals = np.max(val_boxed[lowerBound:upperBound], axis=0)
-        newVals = 255*np.asarray(val_boxed[i])/maxVals
+        upperBound = i+40
+        if upperBound > len(mapped_vals):
+            upperBound = len(mapped_vals)
+        maxVals = np.max(mapped_vals[lowerBound:upperBound], axis=0)
+        newVals = 255*np.asarray(mapped_vals[i])/maxVals
         newVals = newVals.astype(int)
-        val_boxed[i] = newVals
-
+        mapped_vals[i] = newVals
+    
     time_filename = file.replace("./wav/", "./seq/").replace(".wav", ".times")
     data_filename = file.replace("./wav/", "./seq/").replace(".wav", ".dat")
 
     np.savetxt(time_filename, time_boxed, delimiter='', newline='\n')
-    np.savetxt(data_filename, val_boxed, delimiter=',', newline='\n')
+    np.savetxt(data_filename, mapped_vals, delimiter=',', newline='\n')
     print 'Finished'
