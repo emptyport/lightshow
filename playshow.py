@@ -89,11 +89,11 @@ for song in song_names:
                     ser.flushInput()
                     ser.flushOutput()
                 shouldChange = False
-                try:
-                    next_val = vals.pop(0)
-                    next_time = times.pop(0)
-                except:
-                    dummy = 0
+            try:
+                next_val = vals.pop(0)
+                next_time = times.pop(0)
+            except:
+                dummy = 0
         time.sleep(0.001)
 
     if ARDUINO:
